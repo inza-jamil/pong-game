@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pong Game</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --line: #e5e7eb;
+      --text: #f9fafb;
+      --accent: #60a5fa;
+      --score: #fbbf24;
+      --button: #1d4ed8;
+      --button-hover: #2563eb;
+      --overlay: rgba(0, 0, 0, 0.6);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, #020817, #111827);
+      color: var(--text);
+      font-family: Arial, sans-serif;
+      overflow: hidden;
+    }
+
+    .game-shell {
+      position: relative;
+      border: 3px solid var(--line);
+      border-radius: 16px;
+      padding: 14px 14px 10px;
+      background: rgba(17, 24, 39, 0.92);
+      box-shadow: 0 25px 50px rgba(0, 0, 0, 0.4);
+    }
+
+    .scoreboard {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 18px;
+      font-size: 2.2rem;
+      font-weight: 700;
+      letter-spacing: 2px;
+      margin-bottom: 8px;
+      user-select: none;
+    }
+
+    .score {
+      min-width: 60px;
+      text-align: center;
+      color: var(--score);
+    }
+
+    canvas {
+      display: block;
+      width: 800px;
+      height: 500px;
+      background: #000;
+      border: 2px solid var(--line);
+      border-radius: 8px;
+      box-shadow: inset 0 0 20px rgba(255,255,255,0.06);
+    }
+
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--overlay);
+      border-radius: 14px;
+      flex-direction: column;
+      gap: 14px;
+      z-index: 2;
+      transition: opacity 0.25s ease;
+    }
+
+    .hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .overlay h2 {
+      margin: 0;
+      font-size: clamp(1.8rem, 3vw, 2.5rem);
+      letter-spacing: 1px;
+    }
+
+    .overlay p {
+      margin: 0;
+      color: #dbeafe;
+      font-size: 1rem;
+    }
+
+    button {
+      background: var(--button);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      padding: 12px 22px;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      box-shadow: 0 8px 20px rgba(37, 99, 235, 0.4);
+    }
+
+    button:hover {
+      background: var(--button-hover);
+      transform: translateY(-1px);
+    }
+  </style>
+</head>
+<body>
+  <div class="game-shell">
+    <div class="scoreboard">
+      <span id="leftScore" class="score">0</span>
+      <span style="color:#fff;">:</span>
+      <span id="rightScore" class="score">0</span>
+    </div>
+
+    <canvas id="pong" width="800" height="500"></canvas>
+
+    <div id="overlay" class="overlay">
+      <h2 id="overlayTitle">Pong</h2>
+      <p>Move with mouse or Arrow Up / Arrow Down</p>
+      <button id="startBtn">Start Game</button>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("pong");
+    const ctx = canvas.getContext("2d");
+    const leftScoreEl = document.getElementById("leftScore");
+    const rightScoreEl = document.getElementById("rightScore");
+    const overlay = document.getElementById("overlay");
+    const overlayTitle = document.getElementById("overlayTitle");
+    const startBtn = document.getElementById("startBtn");
+
+    const game = {
+      width: canvas.width,
+      height: canvas.height,
+      running: false,
+      started: false,
+      goalsToWin: 7,
+      leftPaddle: {
+        x: 20,
+        y: (canvas.height - 100) / 2,
+        width: 14,
+        height: 100,
+        speed: 520,
+        targetY: 0
+      },
+      rightPaddle: {
+        x: canvas.width - 20 - 14,
+        y: (canvas.height - 100) / 2,
+        width: 14,
+        height: 100,
+        speed: 440
+      },
+      ball: {
+        x: canvas.width / 2,
+        y: canvas.height / 2,
+        radius: 8,
+        vx: 260,
+        vy: 160
+      },
+      keys: {
+        ArrowUp: false,
+        ArrowDown: false
+      },
+      score: { left: 0, right: 0 },
+      mouseActive: false,
+      lastTime: 0
+    };
+
+    let audioCtx = null;
+
+    function initAudio() {
+      if (!audioCtx) {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (AudioContextClass) {
+          audioCtx = new AudioContextClass();
+        }
+      }
+      if (audioCtx && audioCtx.state === "suspended") {
+        audioCtx.resume();
+      }
+    }
+
+    function playTone(frequency, duration, type = "sine", volume = 0.08) {
+      if (!audioCtx) return;
+      const oscillator = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+
+      oscillator.type = type;
+      oscillator.frequency.value = frequency;
+
+      gain.gain.value = volume;
+
+      oscillator.connect(gain);
+      gain.connect(audioCtx.destination);
+
+      oscillator.start();
+      gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+
+      oscillator.stop(audioCtx.currentTime + duration);
+    }
+
+    function playBounceSound() {
+      playTone(220, 0.05, "square", 0.04);
+    }
+
+    function playScoreSound() {
+      playTone(420, 0.12, "triangle", 0.07);
+    }
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function updateScoreboard() {
+      leftScoreEl.textContent = game.score.left;
+      rightScoreEl.textContent = game.score.right;
+    }
+
+    function resetBall(direction) {
+      const angle = (Math.random() * 120 - 60) * (Math.PI / 180);
+      const baseSpeed = 270 + Math.random() * 30;
+
+      game.ball.x = game.width / 2;
+      game.ball.y = game.height / 2;
+      game.ball.vx = direction * baseSpeed * Math.cos(angle);
+      game.ball.vy = baseSpeed * Math.sin(angle);
+    }
+
+    function setLeftPaddleToMouse(mouseY) {
+      const rect = canvas.getBoundingClientRect();
+      const relativeY = mouseY - rect.top;
+      game.leftPaddle.targetY = relativeY - game.leftPaddle.height / 2;
+      game.mouseActive = true;
+    }
+
+    function updatePaddles(dt) {
+      const left = game.leftPaddle;
+      const right = game.rightPaddle;
+
+      if (game.keys.ArrowUp) {
+        left.y -= left.speed * dt;
+        game.mouseActive = false;
+      } else if (game.keys.ArrowDown) {
+        left.y += left.speed * dt;
+        game.mouseActive = false;
+      } else if (game.mouseActive) {
+        left.y += (left.targetY - left.y) * Math.min(1, dt * 14);
+      }
+
+      left.y = clamp(left.y, 0, game.height - left.height);
+
+      const aiTarget = game.ball.y - right.height / 2;
+      right.y += (aiTarget - right.y) * Math.min(1, dt * 7.5);
+      right.y = clamp(right.y, 0, game.height - right.height);
+    }
+
+    function handleWallBounce() {
+      const b = game.ball;
+
+      if (b.y - b.radius <= 0) {
+        b.y = b.radius;
+        b.vy *= -1;
+        playBounceSound();
+      }
+
+      if (b.y + b.radius >= game.height) {
+        b.y = game.height - b.radius;
+        b.vy *= -1;
+        playBounceSound();
+      }
+    }
+
+    function handlePaddleCollision(paddle, isLeft) {
+      const b = game.ball;
+
+      const colliding =
+        b.x - b.radius < paddle.x + paddle.width &&
+        b.x + b.radius > paddle.x &&
+        b.y - b.radius < paddle.y + paddle.height &&
+        b.y + b.radius > paddle.y;
+
+      if (!colliding) return;
+
+      const impact = (b.y - (paddle.y + paddle.height / 2)) / (paddle.height / 2);
+      const bounceAngle = impact * 1.35;
+      const speedBoost = 22;
+      const speed = Math.hypot(b.vx, b.vy) + speedBoost;
+
+      if (isLeft) {
+        b.x = paddle.x + paddle.width + b.radius;
+      } else {
+        b.x = paddle.x - b.radius;
+      }
+
+      const direction = isLeft ? 1 : -1;
+      b.vx = direction * speed * Math.cos(bounceAngle);
+      b.vy = speed * Math.sin(bounceAngle);
+      playBounceSound();
+    }
+
+    function checkScoring() {
+      const b = game.ball;
+
+      if (b.x + b.radius < 0) {
+        game.score.right += 1;
+        updateScoreboard();
+        playScoreSound();
+        resetBall(1);
+      }
+
+      if (b.x - b.radius > game.width) {
+        game.score.left += 1;
+        updateScoreboard();
+        playScoreSound();
+        resetBall(-1);
+      }
+
+      if (game.score.left >= game.goalsToWin || game.score.right >= game.goalsToWin) {
+        endGame();
+      }
+    }
+
+    function updateBall(dt) {
+      const b = game.ball;
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+
+      handleWallBounce();
+      handlePaddleCollision(game.leftPaddle, true);
+      handlePaddleCollision(game.rightPaddle, false);
+      checkScoring();
+    }
+
+    function update(dt) {
+      if (!game.running) return;
+      updatePaddles(dt);
+      updateBall(dt);
+    }
+
+    function drawNet() {
+      ctx.beginPath();
+      ctx.setLineDash([12, 12]);
+      ctx.moveTo(game.width / 2, 0);
+      ctx.lineTo(game.width / 2, game.height);
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    function drawPaddle(paddle) {
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
+    }
+
+    function drawBall() {
+      ctx.beginPath();
+      ctx.arc(game.ball.x, game.ball.y, game.ball.radius, 0, Math.PI * 2);
+      ctx.fillStyle = "#60a5fa";
+      ctx.fill();
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, game.width, game.height);
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, game.width, game.height);
+
+      drawNet();
+      drawPaddle(game.leftPaddle);
+      drawPaddle(game.rightPaddle);
+      drawBall();
+    }
+
+    function showOverlay(title, buttonText) {
+      overlayTitle.textContent = title;
+      startBtn.textContent = buttonText;
+      overlay.classList.remove("hidden");
+    }
+
+    function hideOverlay() {
+      overlay.classList.add("hidden");
+    }
+
+    function startGame() {
+      initAudio();
+
+      if (!game.started) {
+        game.started = true;
+      }
+
+      game.running = true;
+      hideOverlay();
+    }
+
+    function pauseGame() {
+      if (!game.started) return;
+      game.running = !game.running;
+      if (game.running) {
+        hideOverlay();
+      } else {
+        showOverlay("Paused", "Resume Game");
+      }
+    }
+
+    function endGame() {
+      game.running = false;
+      const winner =
+        game.score.left >= game.goalsToWin ? "You Win!" : "Computer Wins!";
+
+      showOverlay(winner, "Play Again");
+      game.started = false;
+      game.score.left = 0;
+      game.score.right = 0;
+      updateScoreboard();
+      resetBall(Math.random() > 0.5 ? 1 : -1);
+    }
+
+    function gameLoop(timestamp) {
+      if (!game.lastTime) game.lastTime = timestamp;
+      const dt = Math.min((timestamp - game.lastTime) / 1000, 0.03);
+      game.lastTime = timestamp;
+
+      update(dt);
+      draw();
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowUp") {
+        game.keys.ArrowUp = true;
+      }
+      if (event.key === "ArrowDown") {
+        game.keys.ArrowDown = true;
+      }
+      if (event.code === "Space") {
+        event.preventDefault();
+        if (game.running) {
+          pauseGame();
+        } else {
+          if (game.started) {
+            startGame();
+          } else {
+            startGame();
+          }
+        }
+      }
+    });
+
+    window.addEventListener("keyup", (event) => {
+      if (event.key === "ArrowUp") {
+        game.keys.ArrowUp = false;
+      }
+      if (event.key === "ArrowDown") {
+        game.keys.ArrowDown = false;
+      }
+    });
+
+    canvas.addEventListener("mousemove", (event) => {
+      setLeftPaddleToMouse(event.clientY);
+    });
+
+    startBtn.addEventListener("click", () => {
+      if (game.running) {
+        pauseGame();
+        return;
+      }
+
+      if (game.started && overlayTitle.textContent === "Paused") {
+        startGame();
+      } else {
+        startGame();
+      }
+    });
+
+    updateScoreboard();
+    resetBall(Math.random() > 0.5 ? 1 : -1);
+    showOverlay("Pong", "Start Game");
+    requestAnimationFrame(gameLoop);
+  </script>
+</body>
+</html>
